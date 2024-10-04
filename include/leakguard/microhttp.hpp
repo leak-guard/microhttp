@@ -113,12 +113,12 @@ public:
         abort();
     }
 
-    ValueString& operator[](int index) {
-        return m_headers[index].second;
+    auto& operator[](int index) {
+        return m_headers[index];
     }
 
-    const ValueString& operator[](int index) const {
-        return m_headers[index].second;
+    const auto& operator[](int index) const {
+        return m_headers[index];
     }
 
     int find(const TagString& tag) const 
@@ -136,14 +136,14 @@ public:
 
     auto begin() { return m_headers.begin(); }
     auto begin() const { return m_headers.begin(); }
-    auto end() { return m_headers.begin(); }
-    auto end() const { return m_headers.begin(); }
+    auto end() { return m_headers.end(); }
+    auto end() const { return m_headers.end(); }
 
 private:
     StaticVector<std::pair<TagString, ValueString>, HTTP_MAX_HEADERS> m_headers;
 
     template <std::size_t n>
-    void parseAndAdd(const StaticString<n>& line)
+    bool parseAndAdd(const StaticString<n>& line)
     {
         enum class Stage {
             LTRIM,
@@ -154,7 +154,7 @@ private:
 
         TagString tag;
         ValueString value;
-        Stage stage;
+        Stage stage = Stage::LTRIM;
 
         std::size_t valueLength = 0;
         for (auto c : line) {
@@ -175,6 +175,7 @@ private:
                 case Stage::MTRIM:
                     if (!std::isspace(c)) {
                         value += std::tolower(c);
+                        valueLength = value.GetSize();
                         stage = Stage::VALUE;
                     }
                     break;
@@ -188,7 +189,12 @@ private:
         }
 
         value.Truncate(valueLength);
-        add(tag, value);
+        if (!tag.IsEmpty() && !value.IsEmpty()) {
+            add(tag, value);
+            return true;
+        } else {
+            return false;
+        }
     }
 };
 
@@ -266,7 +272,9 @@ private:
         HttpMethod m_requestMethod {};
         StaticString<64> m_requestUrl {};
         HttpHeaders m_requestHeaders {};
-        std::size_t contentLength {};
+        std::size_t m_contentLength {};
+
+        void processLine();
     };
 
     SocketImpl_t m_socketImpl;
@@ -328,14 +336,108 @@ void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::reset()
     m_state = ConnectionState::URI_AND_METHOD;
     m_requestUrl.Clear();
     m_requestHeaders.clear();
-    contentLength = 0;
+    m_contentLength = 0;
 }
 
 template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
 void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::recvBytes(
     const char* data, std::size_t numBytes)
 {
-    std::cout << m_connectionId << std::endl;
+    while (numBytes) {
+        if (m_state == ConnectionState::FINISHED || m_state == ConnectionState::DISCARDED) {
+            return;
+        }
+
+        bool isParsingLineByLine = m_state < ConnectionState::REQUEST_BODY;
+        ConnectionState initialState = m_state;
+
+        if (isParsingLineByLine) {
+            while (numBytes) {
+                m_buffer += *(data++);
+                --numBytes;
+
+                int bufferSize = m_buffer.GetSize();
+
+                if (bufferSize >= 2 
+                    && m_buffer[bufferSize - 2] == '\r' 
+                    && m_buffer[bufferSize - 1] == '\n') {
+
+                    m_buffer.Truncate(bufferSize - 2);
+                    processLine();
+                    m_buffer.Clear();
+
+                    if (m_state != initialState) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (m_state == ConnectionState::REQUEST_BODY) {
+            while (m_buffer.GetSize() < m_contentLength && numBytes) {
+                m_buffer += *(data++);
+                --numBytes;
+            }
+
+            if (m_buffer.GetSize() == m_contentLength) {
+                std::cout << m_buffer.ToCStr() << std::endl;
+                const char* text = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n<b>Server works!</b>";
+                m_server->m_socketImpl.send(m_connectionId, text, strlen(text));
+                m_server->m_socketImpl.close(m_connectionId);
+                m_state = ConnectionState::FINISHED;
+            }
+        }
+    }
+}
+
+template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
+void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::processLine()
+{
+    switch (m_state) {
+    case ConnectionState::URI_AND_METHOD:
+    {
+        static const std::array METHODS = {
+            StaticString<8>("GET "),
+            StaticString<8>("POST "),
+            StaticString<8>("PUT "),
+            StaticString<8>("PATCH "),
+            StaticString<8>("DELETE "),
+        };
+
+        bool foundMethod = false;
+        for (size_t i = 0; i < METHODS.size(); ++i) {
+            if (m_buffer.StartsWith(METHODS[i])) {
+                m_requestMethod = static_cast<HttpMethod>(i);
+                m_buffer.Skip(METHODS[i].GetLength());
+                foundMethod = true;
+                break;
+            }
+        }
+
+        if (!foundMethod) {
+            m_server->m_socketImpl.close(m_connectionId);
+            discard();
+            return;
+        }
+
+        // Cut HTTP/1.1 off
+        m_buffer.Truncate(m_buffer.GetSize() - 9);
+        m_requestUrl = m_buffer;
+        
+        m_state = ConnectionState::REQUEST_HEADERS;
+        break;
+    }
+    case ConnectionState::REQUEST_HEADERS:
+        if (!m_requestHeaders.parseAndAdd(m_buffer)) {
+            m_state = ConnectionState::REQUEST_BODY;
+        } else if (m_requestHeaders[m_requestHeaders.size() - 1].first == STR("content-length")) {
+            m_contentLength = m_requestHeaders[
+                m_requestHeaders.size() - 1].second.ToInteger<std::size_t>();
+        }
+        break;
+    default:
+        break;
+    }
 }
 
 };

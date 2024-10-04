@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdlib>
 
 namespace lg {
@@ -470,6 +471,35 @@ public:
     }
 
     /**
+     * @brief Converts string to integral type
+     * 
+     * @tparam T type of integral type
+     * @return conversion result or 0, if conversion failed
+     */
+    template <typename T>
+    [[nodiscard]] T ToInteger() const noexcept
+    {
+        T value {};
+        bool negative = false;
+        bool first = true;
+
+        for (auto c : *this) {
+            if (std::isdigit(c)) {
+                value *= 10;
+                value += c - '0';
+            } else if (first && c == '-') {
+                negative = true;
+            } else {
+                return T {};
+            }
+
+            first = false;
+        }
+
+        return value * (negative ? -1 : 1);
+    }
+
+    /**
      * @brief Provides implicit conversion to a C-style array of chars
      *
      * @return Pointer to a zero-terminated char array
@@ -539,6 +569,29 @@ public:
         }
 
         return true;
+    }
+
+    /**
+     * @brief Skips n first characters
+     * 
+     * @param characters number of characters to skip
+     * @return true, if the operation succeeded,
+     * @return false otherwise
+     */
+    bool Skip(std::size_t characters) noexcept
+    {
+        if (characters > m_currentSize) {
+            return false;
+        } else if (characters == m_currentSize) {
+            Clear();
+            return true;
+        } else {
+            for (size_t i = 0; i <= m_currentSize - characters; ++i) {
+                m_buffer[i] = m_buffer[i + characters];
+            }
+            m_currentSize -= characters;
+            return true;
+        }
     }
 
     /**
