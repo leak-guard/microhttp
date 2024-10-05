@@ -152,11 +152,15 @@ private:
     std::array<bool, MAX_CONNECTIONS> m_connectionSlot {};
 };
 
-static_assert(lg::SocketImpl<LinuxSocketImpl>);
+static_assert(lg::SocketImpl<LinuxSocketImpl>, "LinuxSocketImpl does not satisfy SocketImpl concept");
 
 int main()
 {
     lg::HttpServer<LinuxSocketImpl, LinuxSocketImpl::MAX_CONNECTIONS> server;
+
+    server.get("/", [&](lg::HttpRequest& req, lg::HttpResponse& res) {
+        
+    });
 
     server.start(8080);
 }

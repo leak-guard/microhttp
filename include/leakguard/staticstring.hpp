@@ -112,8 +112,6 @@ public:
             } else {
                 result.m_buffer[bufferPosition] = DIGITS[absolute * 2 + 1];
             }
-
-            result.m_buffer[result.m_currentSize] = '\0';
         }
 
         return result;
@@ -130,7 +128,6 @@ public:
     constexpr StaticString() noexcept
         : m_buffer({})
     {
-        m_buffer[0] = '\0';
     }
 
     /**
@@ -194,8 +191,6 @@ public:
         m_currentSize = std::min(maxSize, length);
         std::copy(buffer, buffer + m_currentSize, m_buffer.begin());
         // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-
-        m_buffer[m_currentSize] = '\0';
     }
     ///@}
 
@@ -217,8 +212,6 @@ public:
         m_currentSize = std::min(maxSize, other.m_currentSize);
         std::copy(other.m_buffer.begin(),
             other.m_buffer.begin() + m_currentSize, m_buffer.begin());
-
-        m_buffer[m_currentSize] = '\0';
         return *this;
     }
 
@@ -233,8 +226,6 @@ public:
         std::copy(other.m_buffer.begin(),
             other.m_buffer.begin() + other.m_currentSize, m_buffer.begin());
         m_currentSize = other.m_currentSize;
-
-        m_buffer[m_currentSize] = '\0';
         return *this;
     }
 
@@ -253,8 +244,6 @@ public:
             if (!m_buffer[m_currentSize])
                 break;
         }
-
-        m_buffer[m_currentSize] = '\0';
         return *this;
         // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
     }
@@ -364,7 +353,6 @@ public:
             m_buffer.begin() + m_currentSize);
 
         m_currentSize += copyCharacters;
-        m_buffer[m_currentSize] = '\0';
         return *this;
     }
 
@@ -384,8 +372,6 @@ public:
             m_buffer[m_currentSize] = buffer[i];
             // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
         }
-
-        m_buffer[m_currentSize] = '\0';
         return *this;
     }
 
@@ -399,7 +385,6 @@ public:
     {
         if (m_currentSize < maxSize) {
             m_buffer[m_currentSize++] = c;
-            m_buffer[m_currentSize] = '\0';
         }
 
         return *this;
@@ -467,6 +452,7 @@ public:
      */
     [[nodiscard]] const char* ToCStr() const noexcept
     {
+        m_buffer[m_currentSize] = '\0';
         return m_buffer.data();
     }
 
@@ -522,7 +508,6 @@ public:
     void Clear() noexcept
     {
         m_currentSize = 0;
-        m_buffer[0] = '\0';
     }
 
     /**
@@ -649,7 +634,6 @@ public:
         }
 
         m_currentSize = length;
-        m_buffer[m_currentSize] = '\0';
         return true;
     }
 
@@ -657,7 +641,7 @@ public:
 
 private:
     size_t m_currentSize { 0 };
-    std::array<char, maxSize + 1> m_buffer;
+    mutable std::array<char, maxSize + 1> m_buffer;
 };
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays)
