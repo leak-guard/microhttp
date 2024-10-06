@@ -1,8 +1,7 @@
-#include <asm-generic/socket.h>
-#include <cerrno>
 #include <leakguard/microhttp.hpp>
 
 #include <array>
+#include <cerrno>
 #include <iostream>
 
 // Linux system headers
@@ -142,6 +141,14 @@ public:
         return 0;
     }
 
+    void finish(int connectionId)
+    {
+        if (m_connectionSlot.at(connectionId)) {
+            int fd = m_connectionFd.at(connectionId);
+            ::shutdown(fd, SHUT_WR);
+        }
+    }
+
 private:
     static constexpr auto TIMEOUT_MS = 500;
 
@@ -152,7 +159,8 @@ private:
     std::array<bool, MAX_CONNECTIONS> m_connectionSlot {};
 };
 
-static_assert(lg::SocketImpl<LinuxSocketImpl>, "LinuxSocketImpl does not satisfy SocketImpl concept");
+static_assert(lg::SocketImpl<LinuxSocketImpl>, 
+    "LinuxSocketImpl does not satisfy SocketImpl concept");
 
 int main()
 {
@@ -160,6 +168,18 @@ int main()
 
     server.get("/", [&](lg::HttpRequest& req, lg::HttpResponse& res) {
         
+    });
+
+    server.get("/anytest/*", [&](lg::HttpRequest& req, lg::HttpResponse& res) {
+        
+    });
+
+    server.get("/param/:1", [&](lg::HttpRequest& req, lg::HttpResponse& res) {
+
+    });
+
+    server.post("/withbody", [&](lg::HttpRequest& req, lg::HttpResponse& res) {
+
     });
 
     server.start(8080);

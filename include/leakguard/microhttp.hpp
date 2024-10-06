@@ -1,6 +1,6 @@
 #pragma once
-#include "leakguard/staticvector.hpp"
 #include "staticstring.hpp"
+#include "staticvector.hpp"
 
 #include <array>
 #include <cctype>
@@ -8,7 +8,10 @@
 #include <cstdint>
 #include <functional>
 #include <iostream>
+#include <string>
 #include <utility>
+#include <variant>
+#include <vector>
 
 #ifndef HTTP_BUFFER_SIZE
 #define HTTP_BUFFER_SIZE 1024
@@ -28,6 +31,14 @@
 
 #ifndef HTTP_TARGET_SEND_CHUNK_LENGTH
 #define HTTP_TARGET_SEND_CHUNK_LENGTH 256
+#endif
+
+#ifndef HTTP_REQUEST_PARAM_COUNT
+#define HTTP_REQUEST_PARAM_COUNT 4
+#endif
+
+#ifndef HTTP_MAX_URL_PARTS
+#define HTTP_MAX_URL_PARTS 8
 #endif
 
 namespace lg {
@@ -79,6 +90,7 @@ concept SocketImpl = requires(T t) {
     { t.send(std::declval<int>(), 
         std::declval<const char*>(), 
         std::declval<std::size_t>()) } -> std::convertible_to<std::size_t>;
+    t.finish(std::declval<int>());
 };
 
 class HttpHeaders {
@@ -294,7 +306,8 @@ enum class HttpMethod {
     POST,
     PUT,
     PATCH,
-    DELETE
+    DELETE,
+    METHOD_COUNT
 };
 
 /**
@@ -508,6 +521,21 @@ public:
         registerHandler(HttpMethod::DELETE, route, handler);
     }
 
+    /**
+     * @brief Register a new request handler for all available HTTP methods
+     * 
+     * @param route route to handle
+     * @param handler a handler that processes HttpRequest and produces HttpResponse
+     */
+    void all(const char* route, RequestHandler handler)
+    {
+        registerHandler(HttpMethod::GET, route, handler);
+        registerHandler(HttpMethod::POST, route, handler);
+        registerHandler(HttpMethod::PUT, route, handler);
+        registerHandler(HttpMethod::PATCH, route, handler);
+        registerHandler(HttpMethod::DELETE, route, handler);
+    }
+
     // Virtual methods
     void clientConnected(int connectionId) override;
     void clientDisconnected(int connectionId) override;
@@ -559,11 +587,33 @@ private:
         HttpHeaders m_requestHeaders {};
         std::size_t m_contentLength {};
 
-        void processLine();
+        void processRequestLine();
+    };
+
+    struct NoneURLPart {};
+
+    struct NormalURLPart {
+        std::string match;
+    };
+
+    struct ParamURLPart {
+        std::uint32_t paramId;
+    };
+
+    struct AnyURLPart {};
+
+    using URLPart = std::variant<
+        NoneURLPart, NormalURLPart, ParamURLPart, AnyURLPart>;
+
+    struct InternalHandler {
+        RequestHandler handler;
+        StaticVector<URLPart, HTTP_MAX_URL_PARTS> matcher;
     };
 
     SocketImpl_t m_socketImpl;
     std::array<Connection, MAX_CONNECTIONS> m_connections;
+    std::array<std::vector<InternalHandler>, 
+        static_cast<std::size_t>(HttpMethod::METHOD_COUNT)> m_handlers;
 
     void registerHandler(HttpMethod method, const char* route, RequestHandler handler);
 };
@@ -585,6 +635,13 @@ HttpServer<SocketImpl_t, MAX_CONNECTIONS>::HttpServer()
 template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
 void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::start(std::uint16_t port)
 {
+    // Register a final handler that matches all unprocessed requests
+    // and returns 404 Not Found
+
+    all("*", [&](HttpRequest& req, HttpResponse& res) {
+        res.status(HttpStatusCode::NotFound_404);
+    });
+
     m_socketImpl.bind(port);
 }
 
@@ -615,7 +672,51 @@ template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
 void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::registerHandler(
     HttpMethod method, const char* route, RequestHandler handler)
 {
+    InternalHandler internalHandler = { std::move(handler) };
+    
+    while (*route) {
+        char c = *route;
 
+        if (c == '/') {
+            // Skip any forward slashes
+            ++route;
+            continue;
+        }
+
+        if (c == '*') {
+            while (*route && *route != '/') { 
+                ++route;
+            }
+
+            internalHandler.matcher.Append(AnyURLPart {});
+            continue;
+        }
+
+        if (c == ':') {
+            StaticString<16> buffer;
+            ++route;
+
+            while (*route && *route != '/') { 
+                buffer += *route;
+                ++route;
+            }
+
+            internalHandler.matcher.Append(
+                ParamURLPart { buffer.ToInteger<std::uint32_t>() });
+            continue;
+        }
+
+        std::string urlPart;
+        while (*route && *route != '/') {
+            urlPart += *route;
+            ++route;
+        }
+
+        internalHandler.matcher.Append( 
+            NormalURLPart { std::move(urlPart) });
+    }
+    
+    m_handlers.at(static_cast<int>(method)).emplace_back(std::move(internalHandler));
 }
 
 template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
@@ -657,7 +758,7 @@ void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::recvBytes(
                     && m_buffer[bufferSize - 1] == '\n') {
 
                     m_buffer.Truncate(bufferSize - 2);
-                    processLine();
+                    processRequestLine();
                     m_buffer.Clear();
 
                     if (m_state != initialState) {
@@ -685,7 +786,7 @@ void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::recvBytes(
 }
 
 template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
-void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::processLine()
+void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::processRequestLine()
 {
     switch (m_state) {
     case ConnectionState::URI_AND_METHOD:
@@ -731,7 +832,9 @@ void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::processLine()
     case ConnectionState::REQUEST_HEADERS:
         if (!m_requestHeaders.parseAndAdd(m_buffer)) {
             m_state = ConnectionState::REQUEST_BODY;
-        } else if (m_requestHeaders[m_requestHeaders.size() - 1].first == STR("content-length")) {
+        } else if (m_requestHeaders[m_requestHeaders.size() - 1].first 
+            == STR("content-length")) {
+                
             m_contentLength = m_requestHeaders[
                 m_requestHeaders.size() - 1].second.ToInteger<std::size_t>();
         }
