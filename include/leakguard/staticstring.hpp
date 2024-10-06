@@ -126,7 +126,6 @@ public:
      * @brief Default constructor, creates an empty string
      */
     constexpr StaticString() noexcept
-        : m_buffer({})
     {
     }
 

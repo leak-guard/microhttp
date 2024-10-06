@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <functional>
 #include <iostream>
+#include <ostream>
+#include <streambuf>
 #include <string>
 #include <utility>
 #include <variant>
@@ -39,6 +41,10 @@
 
 #ifndef HTTP_MAX_URL_PARTS
 #define HTTP_MAX_URL_PARTS 8
+#endif
+
+#ifndef HTTP_TX_CHUNK_SIZE
+#define HTTP_TX_CHUNK_SIZE 256
 #endif
 
 namespace lg {
@@ -424,22 +430,111 @@ struct HttpRequest {
  * @brief A class that contains attributes of a single HTTP response
  * 
  */
-class HttpResponse {
+class HttpResponse : public std::ostream {
 public:
+    HttpResponse() : std::ostream(&m_osWrapper)
+    {
+    }
+
+    /**
+     * @brief Sets the status code of this response
+     * 
+     * @param status the new status code
+     * @return a reference to self
+     */
     HttpResponse& status(int status)
     {
         m_status = static_cast<HttpStatusCode>(status);
         return *this;
     }
 
+    /**
+     * @brief Sets the status code of this response
+     * 
+     * @param status the new status code
+     * @return a reference to self
+     */
     HttpResponse& status(HttpStatusCode status)
     {
         m_status = status;
         return *this;
     }
 
+    /**
+     * @brief Checks, if HTTP Response Headers have already been sent
+     *        and can be no longer modified.
+     * 
+     * @return true, if headers have been sent,
+     * @return false otherwise
+     */
+    bool headersSent() const
+    {
+        return m_headersSent;
+    }
+
+    /**
+     * @brief Forces HTTP Response Headers to be sent immediately
+     * 
+     */
+    void sendHeaders();
+
+    /**
+     * @brief Immediately sends entire buffer contents to underlying socket
+     *        implementation
+     * 
+     */
+    void flush();
+
+    /**
+     * @brief Sends a chunk of data directly to underlying socket implementation,
+     *        skipping unnecessary memory copying
+     *
+     * This function is meant to be fast, so it does not check if HTTP headers
+     * have already been sent. You must ensure that this is a case by calling
+     * `sendHeaders()` before.
+     *
+     * You also shouldn't mix sendChunk calls with ostream operations. If that
+     * has happened, be sure to call flush() before sendChunk() to ensure buffer
+     * synchronization.
+     * 
+     * @param data a pointer to data to transfer
+     * @param size number of bytes to send
+     */
+    void sendChunk(const char* data, std::size_t size);
+
 private:
+    class OstreamWrapper : public std::streambuf
+    {
+    public:
+        OstreamWrapper(HttpResponse& res)
+            : m_res(res)
+        {
+        }
+
+        int_type overflow(int_type ch) override
+        {
+            if (!m_res.m_headersSent) {
+                m_res.sendHeaders();
+            }
+
+            m_res.m_buffer += ch;
+            
+            if (m_res.m_buffer.GetSize() > m_res.m_buffer.GetCapacity()) {
+                m_res.flush();
+            }
+
+            return true;
+        }
+
+    private:
+        HttpResponse& m_res;
+    };
+
     HttpStatusCode m_status { HttpStatusCode::OK_200 };
+    bool m_headersSent { false };
+    StaticString<HTTP_TX_CHUNK_SIZE> m_buffer;
+    OstreamWrapper m_osWrapper { *this };
+    std::ostream m_os { &m_osWrapper };
 };
 
 template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
@@ -834,7 +929,7 @@ void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::processRequestLine()
             m_state = ConnectionState::REQUEST_BODY;
         } else if (m_requestHeaders[m_requestHeaders.size() - 1].first 
             == STR("content-length")) {
-                
+
             m_contentLength = m_requestHeaders[
                 m_requestHeaders.size() - 1].second.ToInteger<std::size_t>();
         }
