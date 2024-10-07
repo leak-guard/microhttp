@@ -395,6 +395,88 @@ enum class HttpStatusCode {
   NetworkAuthenticationRequired_511 = 511,
 };
 
+/**
+ * @brief Gets HTTP Status Message for the provided Status Code
+ * 
+ * @param status status code for message lookup
+ * @return a pointer to string literal
+ */
+inline constexpr const char* getHttpStatusMessage(HttpStatusCode status) {
+  switch (status) {
+  case HttpStatusCode::Continue_100: return "Continue";
+  case HttpStatusCode::SwitchingProtocol_101: return "Switching Protocol";
+  case HttpStatusCode::Processing_102: return "Processing";
+  case HttpStatusCode::EarlyHints_103: return "Early Hints";
+  case HttpStatusCode::OK_200: return "OK";
+  case HttpStatusCode::Created_201: return "Created";
+  case HttpStatusCode::Accepted_202: return "Accepted";
+  case HttpStatusCode::NonAuthoritativeInformation_203:
+    return "Non-Authoritative Information";
+  case HttpStatusCode::NoContent_204: return "No Content";
+  case HttpStatusCode::ResetContent_205: return "Reset Content";
+  case HttpStatusCode::PartialContent_206: return "Partial Content";
+  case HttpStatusCode::MultiStatus_207: return "Multi-Status";
+  case HttpStatusCode::AlreadyReported_208: return "Already Reported";
+  case HttpStatusCode::IMUsed_226: return "IM Used";
+  case HttpStatusCode::MultipleChoices_300: return "Multiple Choices";
+  case HttpStatusCode::MovedPermanently_301: return "Moved Permanently";
+  case HttpStatusCode::Found_302: return "Found";
+  case HttpStatusCode::SeeOther_303: return "See Other";
+  case HttpStatusCode::NotModified_304: return "Not Modified";
+  case HttpStatusCode::UseProxy_305: return "Use Proxy";
+  case HttpStatusCode::unused_306: return "unused";
+  case HttpStatusCode::TemporaryRedirect_307: return "Temporary Redirect";
+  case HttpStatusCode::PermanentRedirect_308: return "Permanent Redirect";
+  case HttpStatusCode::BadRequest_400: return "Bad Request";
+  case HttpStatusCode::Unauthorized_401: return "Unauthorized";
+  case HttpStatusCode::PaymentRequired_402: return "Payment Required";
+  case HttpStatusCode::Forbidden_403: return "Forbidden";
+  case HttpStatusCode::NotFound_404: return "Not Found";
+  case HttpStatusCode::MethodNotAllowed_405: return "Method Not Allowed";
+  case HttpStatusCode::NotAcceptable_406: return "Not Acceptable";
+  case HttpStatusCode::ProxyAuthenticationRequired_407:
+    return "Proxy Authentication Required";
+  case HttpStatusCode::RequestTimeout_408: return "Request Timeout";
+  case HttpStatusCode::Conflict_409: return "Conflict";
+  case HttpStatusCode::Gone_410: return "Gone";
+  case HttpStatusCode::LengthRequired_411: return "Length Required";
+  case HttpStatusCode::PreconditionFailed_412: return "Precondition Failed";
+  case HttpStatusCode::PayloadTooLarge_413: return "Payload Too Large";
+  case HttpStatusCode::UriTooLong_414: return "URI Too Long";
+  case HttpStatusCode::UnsupportedMediaType_415: return "Unsupported Media Type";
+  case HttpStatusCode::RangeNotSatisfiable_416: return "Range Not Satisfiable";
+  case HttpStatusCode::ExpectationFailed_417: return "Expectation Failed";
+  case HttpStatusCode::ImATeapot_418: return "I'm a teapot";
+  case HttpStatusCode::MisdirectedRequest_421: return "Misdirected Request";
+  case HttpStatusCode::UnprocessableContent_422: return "Unprocessable Content";
+  case HttpStatusCode::Locked_423: return "Locked";
+  case HttpStatusCode::FailedDependency_424: return "Failed Dependency";
+  case HttpStatusCode::TooEarly_425: return "Too Early";
+  case HttpStatusCode::UpgradeRequired_426: return "Upgrade Required";
+  case HttpStatusCode::PreconditionRequired_428: return "Precondition Required";
+  case HttpStatusCode::TooManyRequests_429: return "Too Many Requests";
+  case HttpStatusCode::RequestHeaderFieldsTooLarge_431:
+    return "Request Header Fields Too Large";
+  case HttpStatusCode::UnavailableForLegalReasons_451:
+    return "Unavailable For Legal Reasons";
+  case HttpStatusCode::NotImplemented_501: return "Not Implemented";
+  case HttpStatusCode::BadGateway_502: return "Bad Gateway";
+  case HttpStatusCode::ServiceUnavailable_503: return "Service Unavailable";
+  case HttpStatusCode::GatewayTimeout_504: return "Gateway Timeout";
+  case HttpStatusCode::HttpVersionNotSupported_505:
+    return "HTTP Version Not Supported";
+  case HttpStatusCode::VariantAlsoNegotiates_506: return "Variant Also Negotiates";
+  case HttpStatusCode::InsufficientStorage_507: return "Insufficient Storage";
+  case HttpStatusCode::LoopDetected_508: return "Loop Detected";
+  case HttpStatusCode::NotExtended_510: return "Not Extended";
+  case HttpStatusCode::NetworkAuthenticationRequired_511:
+    return "Network Authentication Required";
+
+  default:
+  case HttpStatusCode::InternalServerError_500: return "Internal Server Error";
+  }
+}
+
 
 /**
  * @brief A struct that contains attributes of a single HTTP request
@@ -424,15 +506,31 @@ struct HttpRequest {
      * 
      */
     const StaticString<HTTP_BUFFER_SIZE>& body;
+
+    /**
+     * @brief Request URL params
+     * 
+     */
+    std::array<std::uint32_t, HTTP_REQUEST_PARAM_COUNT> params { 0 };
 };
 
 /**
  * @brief A class that contains attributes of a single HTTP response
  * 
  */
+template <class Server_t>
 class HttpResponse : public std::ostream {
 public:
-    HttpResponse() : std::ostream(&m_osWrapper)
+    /**
+     * @brief HTTP Response Headers
+     * 
+     */
+    HttpHeaders headers;
+
+    HttpResponse(Server_t& server, typename Server_t::Connection& connection) 
+        : std::ostream(&m_osWrapper)
+        , m_server(server)
+        , m_connection(connection)
     {
     }
 
@@ -496,11 +594,29 @@ public:
      * You also shouldn't mix sendChunk calls with ostream operations. If that
      * has happened, be sure to call flush() before sendChunk() to ensure buffer
      * synchronization.
+     *
+     * Consider calling sendChunked() for larger portions of data.
      * 
      * @param data a pointer to data to transfer
      * @param size number of bytes to send
      */
     void sendChunk(const char* data, std::size_t size);
+
+
+    /**
+     * @brief Sends a portion of data directly to underlying socket 
+     *        implementation, chunking it into smaller parts, skipping
+     *        unnecessary memory copying
+     *
+     * This implementation is meant for large portions of data. For smaller ones,
+     * you can call sendChunk().
+     *
+     * See sendChunk() for all precautions that also apply to this function.
+     * 
+     * @param data a pointer to data to transfer
+     * @param size number of bytes to send
+     */
+    void sendChunked(const char* data, std::size_t size);
 
 private:
     class OstreamWrapper : public std::streambuf
@@ -530,6 +646,9 @@ private:
         HttpResponse& m_res;
     };
 
+    Server_t& m_server;
+    typename Server_t::Connection& m_connection;
+
     HttpStatusCode m_status { HttpStatusCode::OK_200 };
     bool m_headersSent { false };
     StaticString<HTTP_TX_CHUNK_SIZE> m_buffer;
@@ -539,8 +658,12 @@ private:
 
 template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
 class HttpServer : public HttpServerBase {
+    friend class HttpResponse<HttpServer>;
+
 public:
-    using RequestHandler = std::function<void(HttpRequest&, HttpResponse&)>;
+    using Request = HttpRequest;
+    using Response = HttpResponse<HttpServer>;
+    using RequestHandler = std::function<void(Request&, Response&)>;
 
     /**
      * @brief Default ctor
@@ -659,15 +782,15 @@ private:
         void reset();
 
         void recvBytes(const char* data, std::size_t numBytes);
+        std::size_t sendBytes(const char* data, std::size_t numBytes);
+        void flush();
 
     private:
         enum class ConnectionState {
             URI_AND_METHOD,
             REQUEST_HEADERS,
             REQUEST_BODY,
-            RESPONSE_CODE,
-            RESPONSE_HEADERS,
-            RESPONSE_BODY,
+            RESPONSE,
             FINISHED,
             DISCARDED,
         };
@@ -683,6 +806,7 @@ private:
         std::size_t m_contentLength {};
 
         void processRequestLine();
+        void handleRequest();
     };
 
     struct NoneURLPart {};
@@ -703,6 +827,9 @@ private:
     struct InternalHandler {
         RequestHandler handler;
         StaticVector<URLPart, HTTP_MAX_URL_PARTS> matcher;
+
+        template <typename It>
+        bool matches(It begin, It end);
     };
 
     SocketImpl_t m_socketImpl;
@@ -733,7 +860,7 @@ void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::start(std::uint16_t port)
     // Register a final handler that matches all unprocessed requests
     // and returns 404 Not Found
 
-    all("*", [&](HttpRequest& req, HttpResponse& res) {
+    all("/*", [&](Request& req, Response& res) {
         res.status(HttpStatusCode::NotFound_404);
     });
 
@@ -827,6 +954,7 @@ void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::reset()
     m_requestUrl.Clear();
     m_requestHeaders.clear();
     m_contentLength = 0;
+    m_buffer.Clear();
 }
 
 template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
@@ -870,14 +998,28 @@ void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::recvBytes(
             }
 
             if (m_buffer.GetSize() == m_contentLength) {
-                std::cout << m_buffer.ToCStr() << std::endl;
-                const char* text = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
-                m_server->m_socketImpl.send(m_connectionId, text, strlen(text));
+                m_state = ConnectionState::RESPONSE;
+                handleRequest();
+                
+                flush();
                 m_server->m_socketImpl.close(m_connectionId);
                 m_state = ConnectionState::FINISHED;
             }
         }
     }
+}
+
+template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
+std::size_t HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::sendBytes(
+    const char* data, std::size_t numBytes)
+{
+    return m_server->m_socketImpl.send(m_connectionId, data, numBytes);
+}
+
+template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
+void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::flush()
+{
+    m_server->m_socketImpl.finish(m_connectionId);
 }
 
 template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
@@ -936,6 +1078,193 @@ void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::processRequestLine()
         break;
     default:
         break;
+    }
+}
+
+template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
+void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::handleRequest()
+{
+#ifdef HTTP_DEBUG
+    std::cout << "Conn" << m_connectionId
+              << ": "  << m_requestUrl.ToCStr() << std::endl;
+#endif
+    StaticVector<StaticString<64>, 8> urlParts;
+    for (size_t pos = 0; pos < m_requestUrl.GetSize(); ++pos) {
+        char c = m_requestUrl[pos];
+
+        if (c == '/') {
+            if (urlParts.IsEmpty() || !urlParts[urlParts.GetSize() - 1].IsEmpty()) {
+                // Ignore multiple adjacent slashes
+                urlParts.Append(StaticString<64>());
+            }
+        } else if (!urlParts.IsEmpty()) {
+            urlParts[urlParts.GetSize() - 1] += c;
+        }
+    }
+
+    if (!urlParts.IsEmpty() && urlParts[urlParts.GetSize() - 1].IsEmpty()) {
+        urlParts.RemoveIndex(urlParts.GetSize() - 1);
+    }
+
+    for (auto& handler : m_server->m_handlers[static_cast<int>(m_requestMethod)])
+    {
+        if (handler.matches(urlParts.begin(), urlParts.end())) {
+            Request req { 
+                m_requestMethod, m_requestUrl, m_requestHeaders, m_buffer };
+            
+            int i = 0;
+            for (auto& matcherPart : handler.matcher) {
+                ParamURLPart* paramPart = std::get_if<ParamURLPart>(&matcherPart);
+                if (paramPart) {
+                    req.params[paramPart->paramId] = urlParts[i].ToInteger<int>();
+                }
+                ++i;
+            }
+
+            Response res(*m_server, *this);
+            res.headers["Connection"] = "close";
+            res.headers["Server"] = "microhttp";
+
+            handler.handler(req, res);
+
+            res.sendHeaders();
+            res.flush();
+            return;
+        }
+    }
+
+    // None of the handlers matched the request
+    // This should never happen
+
+    m_server->m_socketImpl.close(m_connectionId);
+    discard();
+}
+
+template <std::size_t maxSize>
+static inline bool compareStrings(
+    const std::string& s1, const StaticString<maxSize>& s2)
+{
+    if (s1.size() != s2.GetSize()) return false;
+    auto it1 = s1.begin();
+    auto it2 = s2.begin();
+
+    while (it1 != s1.end() && it2 != s2.end()) {
+        if (*it1 != *it2) return false;
+        ++it1;
+        ++it2;
+    }
+
+    return true;
+}
+
+template <SocketImpl SocketImpl_t, std::size_t MAX_CONNECTIONS>
+template <typename It>
+bool HttpServer<SocketImpl_t, MAX_CONNECTIONS>::InternalHandler::matches(
+    It begin, It end)
+{
+    int i = 0;
+    for (auto it = begin; !(it == end); ++it) {
+        auto& urlPart = *it;
+
+        if (i >= matcher.GetSize()) {
+            return false;
+        }
+
+        auto nonePart = std::get_if<NoneURLPart>(&matcher[i]);
+        auto normalPart = std::get_if<NormalURLPart>(&matcher[i]);
+        auto paramPart = std::get_if<ParamURLPart>(&matcher[i]);
+        auto anyPart = std::get_if<AnyURLPart>(&matcher[i]);
+
+        if (nonePart) {
+            return false;
+        } else if (normalPart) {
+            if (!compareStrings(normalPart->match, urlPart)) {
+                return false;
+            }
+        } else if (paramPart) {
+            // Intentionally do nothing
+        } else if (anyPart) {
+            return true;
+        }
+        
+
+        ++i;
+    }
+
+    // Edge case: any matcher for empty URL
+    if (!matcher.IsEmpty() && std::get_if<AnyURLPart>(&matcher[0])) {
+        return true;
+    }
+
+    return i == matcher.GetSize();
+}
+
+template <class Server_t>
+void HttpResponse<Server_t>::sendHeaders()
+{
+    if (m_headersSent) {
+        return;
+    }
+
+    m_headersSent = true;
+
+    static const char* CRLF = "\r\n";
+
+    *this << "HTTP/1.1 " << static_cast<int>(m_status) 
+          << ' ' << getHttpStatusMessage(m_status) << CRLF;
+
+    for (const auto& header : headers)
+    {
+        *this << header.first << ": " << header.second << CRLF;
+    }
+
+    *this << CRLF;
+}
+
+template <class Server_t>
+void HttpResponse<Server_t>::flush()
+{
+    std::size_t sent = m_connection.sendBytes(m_buffer.begin(), m_buffer.GetSize());
+
+    if (sent == m_buffer.GetSize()) {
+        m_buffer.Clear();
+    } else {
+        m_buffer.Skip(sent);
+    }
+}
+
+template <class Server_t>
+void HttpResponse<Server_t>::sendChunk(const char* data, std::size_t numBytes)
+{
+    while (numBytes) {
+        std::size_t sent = m_connection.sendBytes(data, numBytes);
+
+        if (sent == 0) {
+            return;
+        }
+
+        data += sent;
+        numBytes -= sent;
+    }
+}
+
+template <class Server_t>
+void HttpResponse<Server_t>::sendChunked(const char* data, std::size_t numBytes)
+{
+    while (numBytes) {
+        std::size_t toSend = numBytes;
+        if (toSend > HTTP_TX_CHUNK_SIZE) {
+            toSend = HTTP_TX_CHUNK_SIZE;
+        }
+
+        std::size_t sent = m_connection.sendBytes(data, numBytes);
+        
+        if (sent == 0) {
+            return;
+        }
+
+        data += sent;
+        numBytes -= sent;
     }
 }
 

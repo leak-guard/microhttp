@@ -1,3 +1,4 @@
+#define HTTP_DEBUG
 #include <leakguard/microhttp.hpp>
 
 #include <array>
@@ -164,22 +165,25 @@ static_assert(lg::SocketImpl<LinuxSocketImpl>,
 
 int main()
 {
-    lg::HttpServer<LinuxSocketImpl, LinuxSocketImpl::MAX_CONNECTIONS> server;
+    using HttpServer = lg::HttpServer<LinuxSocketImpl, LinuxSocketImpl::MAX_CONNECTIONS>;
+    HttpServer server;
 
-    server.get("/", [&](lg::HttpRequest& req, lg::HttpResponse& res) {
-        
+    server.get("/", [&](HttpServer::Request& req, HttpServer::Response& res) {
+        res << "<html><body><h1>Home page</h1></body></html>";
     });
 
-    server.get("/anytest/*", [&](lg::HttpRequest& req, lg::HttpResponse& res) {
-        
+    server.get("/anytest/*", [&](HttpServer::Request& req, HttpServer::Response& res) {
+        res << "<html><body><p>Any matcher got URL: " 
+            << req.url.ToCStr() << "</p></body></html>";
     });
 
-    server.get("/param/:1", [&](lg::HttpRequest& req, lg::HttpResponse& res) {
-
+    server.get("/param/:1", [&](HttpServer::Request& req, HttpServer::Response& res) {
+        res.headers.add("X-Param-Val", lg::HttpHeaders::ValueString::Of(req.params[1]));
+        res << "<html><body><p>Got parameter: " << req.params[1] << "</body></html>";
     });
 
-    server.post("/withbody", [&](lg::HttpRequest& req, lg::HttpResponse& res) {
-        
+    server.post("/withbody", [&](HttpServer::Request& req, HttpServer::Response& res) {
+        res << req.body.ToCStr();
     });
 
     server.start(8080);
