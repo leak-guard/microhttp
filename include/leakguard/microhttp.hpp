@@ -1,6 +1,6 @@
 #pragma once
-#include "staticstring.hpp"
-#include "staticvector.hpp"
+#include "leakguard/staticstring.hpp"
+#include "leakguard/staticvector.hpp"
 
 #include <array>
 #include <cctype>
