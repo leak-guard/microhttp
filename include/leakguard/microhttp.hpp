@@ -754,6 +754,20 @@ public:
         registerHandler(HttpMethod::DELETE, route, handler);
     }
 
+    /**
+     * @brief Get underlying socket implementation instance
+     * 
+     * @return reference to underlying socket implementation
+     */
+    SocketImpl_t& getSocket() { return m_socketImpl; }
+
+    /**
+     * @brief Get underlying socket implementation instance
+     * 
+     * @return const reference to underlying socket implementation
+     */
+    const SocketImpl_t& getSocket() const { return m_socketImpl; }
+
     // Virtual methods
     void clientConnected(int connectionId) override;
     void clientDisconnected(int connectionId) override;
