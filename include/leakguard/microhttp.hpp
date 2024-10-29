@@ -9,6 +9,7 @@
 #include <functional>
 #include <iostream>
 #include <ostream>
+#include <optional>
 #include <streambuf>
 #include <string>
 #include <utility>
@@ -816,8 +817,12 @@ private:
 
         HttpMethod m_requestMethod {};
         StaticString<HTTP_MAX_URL_LENGTH> m_requestUrl {};
+        StaticVector<StaticString<64>, 8> m_urlParts {};
         HttpHeaders m_requestHeaders {};
         std::size_t m_contentLength {};
+
+        std::optional<Request> m_req {};
+        std::optional<Response> m_res {};
 
         void processRequestLine();
         void handleRequest();
@@ -1102,40 +1107,42 @@ void HttpServer<SocketImpl_t, MAX_CONNECTIONS>::Connection::handleRequest()
     std::cout << "Conn" << m_connectionId
               << ": "  << m_requestUrl.ToCStr() << std::endl;
 #endif
-    StaticVector<StaticString<64>, 8> urlParts;
+    m_urlParts.Clear();
+
     for (size_t pos = 0; pos < m_requestUrl.GetSize(); ++pos) {
         char c = m_requestUrl[pos];
 
         if (c == '/') {
-            if (urlParts.IsEmpty() || !urlParts[urlParts.GetSize() - 1].IsEmpty()) {
+            if (m_urlParts.IsEmpty() || !m_urlParts[m_urlParts.GetSize() - 1].IsEmpty()) {
                 // Ignore multiple adjacent slashes
-                urlParts.Append(StaticString<64>());
+                m_urlParts.Append(StaticString<64>());
             }
-        } else if (!urlParts.IsEmpty()) {
-            urlParts[urlParts.GetSize() - 1] += c;
+        } else if (!m_urlParts.IsEmpty()) {
+            m_urlParts[m_urlParts.GetSize() - 1] += c;
         }
     }
 
-    if (!urlParts.IsEmpty() && urlParts[urlParts.GetSize() - 1].IsEmpty()) {
-        urlParts.RemoveIndex(urlParts.GetSize() - 1);
+    if (!m_urlParts.IsEmpty() && m_urlParts[m_urlParts.GetSize() - 1].IsEmpty()) {
+        m_urlParts.RemoveIndex(m_urlParts.GetSize() - 1);
     }
 
     for (auto& handler : m_server->m_handlers[static_cast<int>(m_requestMethod)])
     {
-        if (handler.matches(urlParts.begin(), urlParts.end())) {
-            Request req { 
-                m_requestMethod, m_requestUrl, m_requestHeaders, m_buffer };
+        if (handler.matches(m_urlParts.begin(), m_urlParts.end())) {
+            m_req.emplace(m_requestMethod, m_requestUrl, m_requestHeaders, m_buffer);
+            Request& req = m_req.value();
             
             int i = 0;
             for (auto& matcherPart : handler.matcher) {
                 ParamURLPart* paramPart = std::get_if<ParamURLPart>(&matcherPart);
                 if (paramPart) {
-                    req.params[paramPart->paramId] = urlParts[i].ToInteger<int>();
+                    req.params[paramPart->paramId] = m_urlParts[i].ToInteger<int>();
                 }
                 ++i;
             }
 
-            Response res(*m_server, *this);
+            m_res.emplace(*m_server, *this);
+            Response& res = m_res.value();
             res.headers["Connection"] = "close";
             res.headers["Server"] = "microhttp";
 
