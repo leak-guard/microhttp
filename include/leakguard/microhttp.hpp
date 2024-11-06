@@ -1236,7 +1236,7 @@ void HttpResponse<Server_t>::sendHeaders()
 
     for (const auto& header : headers)
     {
-        *this << header.first << ": " << header.second << CRLF;
+        *this << header.first.ToCStr() << ": " << header.second.ToCStr() << CRLF;
     }
 
     *this << CRLF;
