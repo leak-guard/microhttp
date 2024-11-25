@@ -636,7 +636,7 @@ private:
 
             m_res.m_buffer += ch;
             
-            if (m_res.m_buffer.GetSize() > m_res.m_buffer.GetCapacity()) {
+            if (m_res.m_buffer.GetSize() == m_res.m_buffer.GetCapacity()) {
                 m_res.flush();
             }
 
