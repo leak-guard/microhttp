@@ -280,13 +280,13 @@ private:
                     break;
                 case Stage::MTRIM:
                     if (!std::isspace(c)) {
-                        value += std::tolower(c);
+                        value += c;
                         valueLength = value.GetSize();
                         stage = Stage::VALUE;
                     }
                     break;
                 case Stage::VALUE:
-                    value += std::tolower(c);
+                    value += c;
                     if (!std::isspace(c)) {
                         valueLength = value.GetSize();
                     }
